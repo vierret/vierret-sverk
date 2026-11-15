@@ -71,6 +71,7 @@ def _camera_topics(context):
     return image_topic, camera_info_topic
 
 def _make_px4_launch(context, px4_dir):
+    external_gazebo = LaunchConfiguration('external_gazebo').perform(context).strip().lower() == 'true'
     headless = LaunchConfiguration('headless').perform(context).strip().lower() == 'true'
     wslg_gui = LaunchConfiguration('wslg_gui').perform(context).strip().lower() == 'true'
     wslg_gpu_gui = LaunchConfiguration('wslg_gpu_gui').perform(context).strip().lower() == 'true'
@@ -91,7 +92,8 @@ def _make_px4_launch(context, px4_dir):
         and obrik_model not in ('x500_obrik_gigaobrik', 'x500_obrik_graffiti_old')
     ):
         # Center the downward camera over the takeoff marker at world origin.
-        px4_spawn_params = ' PX4_GZ_MODEL_POSE=0,0.0615,0,0,0,0'
+        spawn_z = '0.25' if external_gazebo else '0'
+        px4_spawn_params = f' PX4_GZ_MODEL_POSE=0,0.0615,{spawn_z},0,0,0'
 
     px4_sensor_params = ''
     if obrik_model == 'x500_obrik_gigaobrik':
@@ -138,7 +140,18 @@ def _make_px4_launch(context, px4_dir):
     )
     additional_env = {}
 
-    if headless:
+    if external_gazebo:
+        if any((headless, wslg_gui, wslg_gpu_gui, host_x11_gui, vnc_gui)):
+            raise ValueError('external_gazebo cannot be combined with a local Gazebo display mode.')
+        # The native macOS server owns physics and Metal sensor rendering.
+        # Keep PX4 and the existing ROS stack in Linux; do not start a second
+        # Linux Gazebo server or force llvmpipe on the external process.
+        px4_cmd = (
+            'source /tmp/sverk-xrce-agent.env && '
+            f'{edit_rcs_cmd} && '
+            f'PX4_GZ_STANDALONE=1 {px4_run_env} ./build/px4_sitl_default/bin/px4'
+        )
+    elif headless:
         # px4-rc.simulator при HEADLESS=1 запускает сервер как
         # `gz sim -r -s <world>` БЕЗ --headless-rendering: HEADLESS у PX4
         # выключает только GUI-клиент. Сенсорам (камера обрика) сервер
@@ -849,6 +862,13 @@ def generate_launch_description():
         print(f"WARNING: PX4 directory not found at {px4_dir}. Make sure it exists.")
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'external_gazebo',
+            default_value='false',
+            description='Attach PX4/ROS to an already running external Gazebo server '
+                        '(experimental native macOS Metal). Do not combine with headless '
+                        'or GUI launch flags. Requires bidirectional Gazebo Transport.',
+        ),
         DeclareLaunchArgument(
             'headless',
             default_value='false',

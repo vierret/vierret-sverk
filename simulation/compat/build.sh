@@ -11,3 +11,4 @@ cc -shared -fPIC -O2 -Wall -Wextra -Werror \
   "$compat_dir/px4_poll_eintr.c" -ldl -o "${library}.new"
 mv "${library}.new" "$library"
 echo 'SITL macOS: совместимость PX4 poll/EINTR подготовлена.'
+python3 "$compat_dir/patch_px4_hrt.py"

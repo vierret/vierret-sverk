@@ -7,6 +7,8 @@
 #   ./sim.sh up   wslg-intel     # WSLg + Intel Arc
 #   ./sim.sh up   linux-host     # нативный Linux X11 (сначала: xhost +local:docker)
 #   ./sim.sh up   headless       # без картинки (только физика)
+#   ./sim.sh up   metal          # эксперимент: внешний нативный Gazebo/Metal
+#   ./sim.sh start metal        # весь Metal-симулятор; Ctrl+C останавливает всё
 #   ./sim.sh up   headless ide   # + Web-IDE (VS Code :5467 / терминал :8575)
 #                                #   аддон ide сочетается со всеми режимами, КРОМЕ novnc
 #   ./sim.sh up   novnc   mcp    # + MCP-сервер :8765 (сочетается с любым режимом)
@@ -25,7 +27,12 @@ ADDON="${3:-}"
 fail() { echo "$*" >&2; exit 1; }
 
 [ "$#" -le 3 ] || fail "Лишние аргументы. Формат: $0 <up|down|pull|logs|shell> [режим] [ide+mcp]"
-case "$CMD" in up|down|pull|logs|shell) ;; *) fail "Неизвестная команда '$CMD'. Доступно: up | down | pull | logs | shell" ;; esac
+case "$CMD" in start|up|down|pull|logs|shell) ;; *) fail "Неизвестная команда '$CMD'. Доступно: start metal | up | down | pull | logs | shell" ;; esac
+
+if [ "$CMD" = start ]; then
+  [ "$MODE" = metal ] && [ -z "$ADDON" ] || fail "Единый запуск: $0 start metal (без аддонов)."
+  exec python3 ../macos/metal_session.py
+fi
 
 # shell does not need Compose, .env or a particular display mode.
 if [ "$CMD" = shell ]; then
@@ -38,8 +45,8 @@ case "$MODE" in
   wslg-nvidia) compose_args+=(-f docker-compose.sim.wslg.yml -f docker-compose.sim.wslg.nvidia.yml) ;;
   wslg-intel) compose_args+=(-f docker-compose.sim.wslg.yml -f docker-compose.sim.wslg.intel.yml) ;;
   linux-host) compose_args+=(-f docker-compose.sim.linux-host.yml) ;;
-  headless) ;;
-  *) fail "Неизвестный режим '$MODE'. Доступно: novnc | wslg-nvidia | wslg-intel | linux-host | headless" ;;
+  headless|metal) ;;
+  *) fail "Неизвестный режим '$MODE'. Доступно: novnc | wslg-nvidia | wslg-intel | linux-host | headless | metal" ;;
 esac
 
 macos_compat="${SIM_MACOS_COMPAT:-auto}"
@@ -51,11 +58,17 @@ if [ "$macos_compat" = auto ]; then
 fi
 case "$macos_compat" in
   1)
-    case "$MODE" in novnc|headless) ;; *) fail "Apple Silicon: используйте novnc или headless." ;; esac
+    case "$MODE" in novnc|headless|metal) ;; *) fail "Apple Silicon: используйте novnc, headless или metal." ;; esac
     compose_args+=(-f docker-compose.sim.macos.yml) ;;
   0) ;;
   *) fail "SIM_MACOS_COMPAT должен быть auto, 0 или 1." ;;
 esac
+
+if [ "$MODE" = metal ]; then
+  [ "$macos_compat" = 1 ] || fail "Режим metal предназначен для Apple Silicon с macOS-совместимостью."
+  [ -z "$ADDON" ] || fail "Аддоны в экспериментальном режиме metal пока не поддерживаются."
+  compose_args+=(-f docker-compose.sim.metal.yml)
+fi
 
 # Parse add-ons without unquoted command substitution (Bash 3.2 compatible).
 case "$ADDON" in +*|*+|*++*) fail "Некорректный список аддонов '$ADDON'. Используйте ide, mcp или ide+mcp." ;; esac
@@ -85,6 +98,12 @@ case "$CMD" in
     docker compose "${compose_args[@]}" up -d
     if [ "$macos_compat" = 1 ]; then
       docker compose "${compose_args[@]}" exec -T sitl bash /opt/sverk/sitl-compat/build.sh
+    fi
+    if [ "$MODE" = metal ]; then
+      docker compose "${compose_args[@]}" exec -T sitl python3 /opt/sverk/metal/prepare_xrce.py
+      echo "Metal: контейнер подготовлен. Сначала запустите нативный server и выполните:"
+      echo "python3 ../macos/metal_sim.py network-check"
+      echo "После PASS используйте external_gazebo:=true; noVNC в этом режиме не запускается."
     fi
     [ "$MODE" != novnc ] || echo "noVNC: http://localhost:6080/vnc.html"
     case "$ADDON" in *ide*) echo "Web-IDE: http://localhost:5467  |  терминал: http://localhost:8575" ;; esac
