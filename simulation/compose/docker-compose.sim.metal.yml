@@ -1,0 +1,25 @@
+# Experimental: native macOS Gazebo owns the GUI AND sensor rendering.
+# Requires Docker Desktop host networking enabled and validated Transport.
+# Use together with the base and macOS compatibility overlays.
+services:
+  sitl:
+    # PX4/ROS are launched explicitly; no SSH/VNC daemons on the host network.
+    entrypoint: ["python3", "/opt/sverk/metal/discovery_bridge.py"]
+    command: ["connect"]
+    network_mode: host
+    networks: !reset []
+    ports: !reset []
+    environment:
+      - GZ_PARTITION=${SVERK_METAL_PARTITION:-sverk-metal}
+      - GZ_IP=127.0.0.1
+      # Separate local UDP ports prevent Desktop's automatic port forwarding
+      # from occupying the native server's discovery ports on macOS.
+      - GZ_DISCOVERY_MSG_PORT=11317
+      - GZ_DISCOVERY_SRV_PORT=11318
+      # Discovery multicast does not traverse Desktop's layer-4 host network.
+      # The TCP bridge carries discovery; payload endpoints remain native TCP.
+      - GZ_RELAY=
+      - SVERK_METAL_BRIDGE_PORT=${SVERK_METAL_BRIDGE_PORT:-19090}
+    volumes:
+      - ../macos/discovery_bridge.py:/opt/sverk/metal/discovery_bridge.py:ro
+      - ../macos/prepare_xrce.py:/opt/sverk/metal/prepare_xrce.py:ro

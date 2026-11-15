@@ -33,11 +33,21 @@ class SimWrapperTests(unittest.TestCase):
         self.assertIn('docker-compose.sim.novnc.yml pull', self.calls.read_text())
         self.assertTrue((self.root / 'compose/.env').exists())
 
+    def test_start_metal_delegates_to_session_without_starting_container_twice(self):
+        python = self.root / 'python3'
+        python.write_text('#!/bin/bash\nprintf "%s\\n" "$*" > "$DOCKER_CALLS"\n')
+        python.chmod(0o755)
+        result = self.run_sim('start', 'metal')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().strip(), '../macos/metal_session.py')
+        self.assertFalse((self.root / 'compose/.env').exists())
+
     def test_rejects_invalid_arguments_before_docker(self):
         (self.root / 'compose/.env').touch()
         for args in [('up', 'invalid'), ('up', 'novnc', 'ide'),
                      ('up', 'headless', 'invalid'), ('invalid',),
                      ('up', 'headless', '+'), ('up', 'headless', 'ide++mcp'),
+                     ('start', 'novnc'), ('start', 'metal', 'mcp'),
                      ('up', 'novnc', 'mcp', 'ignored')]:
             with self.subTest(args=args):
                 result = self.run_sim(*args)
@@ -84,6 +94,16 @@ class SimWrapperTests(unittest.TestCase):
         result = self.run_sim('up', 'novnc', SIM_MACOS_COMPAT='1')
         self.assertEqual(result.returncode, 19)
         self.assertNotIn('http://', result.stdout)
+
+    def test_metal_uses_host_overlay_and_rejects_addons(self):
+        (self.root / 'compose/.env').touch()
+        result = self.run_sim('up', 'metal', SIM_MACOS_COMPAT='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('docker-compose.sim.metal.yml', self.calls.read_text())
+        self.calls.unlink()
+        result = self.run_sim('up', 'metal', 'mcp', SIM_MACOS_COMPAT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.calls.exists())
 
 
 if __name__ == '__main__':
