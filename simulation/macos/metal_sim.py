@@ -16,10 +16,52 @@ import struct
 import sys
 import time
 import zlib
+import xml.etree.ElementTree as ET
 
 HERE = Path(__file__).resolve().parent
 BUILD = HERE / 'build'
 ASSETS = BUILD / 'assets'
+
+
+def prepare_camera():
+    # A 150-degree training lens and the landing legs below keep complete
+    # markers visible after landing drift. At 203 mm clearance the vertical
+    # footprint is ~1.14 m, exceeding the map pitch + marker side (1.0734 m).
+    # Gazebo supplies matching intrinsics; this is a training camera profile.
+    path = ASSETS / 'models/rpi_camera/model.sdf'
+    tree = ET.parse(path)
+    fov = tree.find('.//sensor[@name="imager"]/camera/horizontal_fov')
+    if fov is None:
+        raise RuntimeError('Unsupported rpi_camera model: missing camera horizontal_fov.')
+    value = '2.6179938779914944'
+    if fov.text != value:
+        fov.text = value
+        tree.write(path, encoding='utf-8', xml_declaration=True)
+
+
+def prepare_landing_gear():
+    # A camera only 47 mm above the floor loses ArUco after a small landing
+    # drift. Visible collision legs keep the camera ~203 mm above the map,
+    # preserving the optical TF and rangefinder calibration.
+    path = ASSETS / 'models/x500_base/model.sdf'
+    tree = ET.parse(path)
+    base = tree.find('./model/link[@name="base_link"]')
+    if base is None:
+        raise RuntimeError('Unsupported x500_base model: missing base_link.')
+    if base.find('./collision[@name="sitl_landing_leg_0"]') is not None:
+        return
+    for i, (x, y) in enumerate(((-0.09, -0.08), (0.09, -0.08), (-0.09, 0.08), (0.09, 0.08))):
+        for kind in ('collision', 'visual'):
+            leg = ET.SubElement(base, kind, name=f'sitl_landing_leg_{i}')
+            ET.SubElement(leg, 'pose').text = f'{x} {y} -0.12 0 0 0'
+            cylinder = ET.SubElement(ET.SubElement(leg, 'geometry'), 'cylinder')
+            ET.SubElement(cylinder, 'radius').text = '0.004'
+            ET.SubElement(cylinder, 'length').text = '0.16'
+            if kind == 'visual':
+                material = ET.SubElement(leg, 'material')
+                ET.SubElement(material, 'ambient').text = '0.3 0.3 0.3 1'
+                ET.SubElement(material, 'diffuse').text = '0.3 0.3 0.3 1'
+    tree.write(path, encoding='utf-8', xml_declaration=True)
 
 
 def run(command, **kwargs):
@@ -130,6 +172,8 @@ def assets(image):
             text = path.read_text()
             if linux_prefix in text:
                 path.write_text(text.replace(linux_prefix, str(ASSETS)))
+    prepare_camera()
+    prepare_landing_gear()
     print(f'Assets copied to {ASSETS}. Linux .so system plugins are not macOS plugins.')
 
 

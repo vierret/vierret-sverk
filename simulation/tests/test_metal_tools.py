@@ -1,6 +1,7 @@
 """Metal launcher behavior, independent of native frameworks on CI."""
 import base64
 import importlib.util
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -15,6 +16,51 @@ SPEC.loader.exec_module(metal)
 
 
 class MetalToolsTests(unittest.TestCase):
+    def test_landing_legs_provide_clearance_without_changing_sensors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            model = root / 'models/x500_base/model.sdf'
+            model.parent.mkdir(parents=True)
+            model.write_text('<sdf><model><link name="base_link"><collision name="body"/>'
+                             '<sensor name="imu" type="imu"/></link></model></sdf>')
+            with patch.object(metal, 'ASSETS', root):
+                metal.prepare_landing_gear()
+                first = model.read_bytes()
+                metal.prepare_landing_gear()
+                self.assertEqual(model.read_bytes(), first)
+            link = metal.ET.parse(model).find('./model/link')
+            legs = link.findall('./collision')[1:]
+            self.assertEqual(len(legs), 4)
+            self.assertEqual(len(link.findall('./visual')), 4)
+            self.assertEqual(link.find('./sensor').attrib, {'name': 'imu', 'type': 'imu'})
+            for leg in legs:
+                center_z = float(leg.find('pose').text.split()[2])
+                length = float(leg.find('./geometry/cylinder/length').text)
+                self.assertAlmostEqual(center_z - length / 2, -0.2)
+
+    def test_landing_camera_profile_updates_existing_assets_idempotently(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            camera = root / 'models/rpi_camera/model.sdf'
+            camera.parent.mkdir(parents=True)
+            camera.write_text('<sdf><model><link><sensor name="imager"><camera>'
+                              '<horizontal_fov>1.74</horizontal_fov><image><width>1280</width>'
+                              '<height>960</height></image></camera></sensor></link></model></sdf>')
+            with patch.object(metal, 'ASSETS', root):
+                metal.prepare_camera()
+                first = camera.read_bytes()
+                metal.prepare_camera()
+                self.assertEqual(camera.read_bytes(), first)
+            tree = metal.ET.parse(camera)
+            fov = float(tree.find('.//horizontal_fov').text)
+            self.assertAlmostEqual(fov, 2.6179938779914944)
+            self.assertEqual(tree.find('.//width').text, '1280')
+            self.assertEqual(tree.find('.//height').text, '960')
+            # At landed clearance, one complete 0.4 m marker must fit even
+            # halfway between the 0.6734 m rows of the real ArUco map.
+            footprint = 2 * 0.2031 * math.tan(fov / 2) * 960 / 1280
+            self.assertGreaterEqual(footprint, 0.6734 + 0.4)
+
     def test_xrce_startup_patch_keeps_default_and_is_idempotent(self):
         spec = importlib.util.spec_from_file_location('prepare_xrce', PATH.parent / 'prepare_xrce.py')
         prepare = importlib.util.module_from_spec(spec)

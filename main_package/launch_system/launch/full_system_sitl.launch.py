@@ -92,7 +92,8 @@ def _make_px4_launch(context, px4_dir):
         and obrik_model not in ('x500_obrik_gigaobrik', 'x500_obrik_graffiti_old')
     ):
         # Center the downward camera over the takeoff marker at world origin.
-        px4_spawn_params = ' PX4_GZ_MODEL_POSE=0,0.0615,0,0,0,0'
+        spawn_z = '0.25' if external_gazebo else '0'
+        px4_spawn_params = f' PX4_GZ_MODEL_POSE=0,0.0615,{spawn_z},0,0,0'
 
     px4_sensor_params = ''
     if obrik_model == 'x500_obrik_gigaobrik':

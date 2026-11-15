@@ -95,6 +95,8 @@ def run_session():
                 or not (metal.ASSETS / 'worlds/obrik_aruco.sdf').exists()):
             metal.assets(image)
             stamp.write_text(image_id.stdout.strip())
+        metal.prepare_camera()
+        metal.prepare_landing_gear()
         # Mark ownership before up so a partially created container is cleaned up.
         container_owned = True
         with (LOGS / 'docker.log').open('w') as output:
