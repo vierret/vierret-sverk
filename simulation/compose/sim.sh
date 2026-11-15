@@ -22,43 +22,74 @@ CMD="${1:-}"
 MODE="${2:-novnc}"
 ADDON="${3:-}"
 
-files() {
-  case "$1" in
-    novnc)       echo "-f docker-compose.sim.yml -f docker-compose.sim.novnc.yml" ;;
-    wslg-nvidia) echo "-f docker-compose.sim.yml -f docker-compose.sim.wslg.yml -f docker-compose.sim.wslg.nvidia.yml" ;;
-    wslg-intel)  echo "-f docker-compose.sim.yml -f docker-compose.sim.wslg.yml -f docker-compose.sim.wslg.intel.yml" ;;
-    linux-host)  echo "-f docker-compose.sim.yml -f docker-compose.sim.linux-host.yml" ;;
-    headless)    echo "-f docker-compose.sim.yml" ;;
-    *) echo "Неизвестный режим '$1'. Доступно: novnc | wslg-nvidia | wslg-intel | linux-host | headless" >&2; exit 1 ;;
+fail() { echo "$*" >&2; exit 1; }
+
+[ "$#" -le 3 ] || fail "Лишние аргументы. Формат: $0 <up|down|pull|logs|shell> [режим] [ide+mcp]"
+case "$CMD" in up|down|pull|logs|shell) ;; *) fail "Неизвестная команда '$CMD'. Доступно: up | down | pull | logs | shell" ;; esac
+
+# shell does not need Compose, .env or a particular display mode.
+if [ "$CMD" = shell ]; then
+  exec docker exec -it sverk_sitl bash
+fi
+
+compose_args=(-f docker-compose.sim.yml)
+case "$MODE" in
+  novnc) compose_args+=(-f docker-compose.sim.novnc.yml) ;;
+  wslg-nvidia) compose_args+=(-f docker-compose.sim.wslg.yml -f docker-compose.sim.wslg.nvidia.yml) ;;
+  wslg-intel) compose_args+=(-f docker-compose.sim.wslg.yml -f docker-compose.sim.wslg.intel.yml) ;;
+  linux-host) compose_args+=(-f docker-compose.sim.linux-host.yml) ;;
+  headless) ;;
+  *) fail "Неизвестный режим '$MODE'. Доступно: novnc | wslg-nvidia | wslg-intel | linux-host | headless" ;;
+esac
+
+macos_compat="${SIM_MACOS_COMPAT:-auto}"
+if [ "$macos_compat" = auto ]; then
+  macos_compat=0
+  if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+    macos_compat=1
+  fi
+fi
+case "$macos_compat" in
+  1)
+    case "$MODE" in novnc|headless) ;; *) fail "Apple Silicon: используйте novnc или headless." ;; esac
+    compose_args+=(-f docker-compose.sim.macos.yml) ;;
+  0) ;;
+  *) fail "SIM_MACOS_COMPAT должен быть auto, 0 или 1." ;;
+esac
+
+# Parse add-ons without unquoted command substitution (Bash 3.2 compatible).
+case "$ADDON" in +*|*+|*++*) fail "Некорректный список аддонов '$ADDON'. Используйте ide, mcp или ide+mcp." ;; esac
+addon_args=("")
+if [ -n "$ADDON" ]; then
+  IFS='+' read -r -a addon_args <<< "$ADDON"
+fi
+for addon in "${addon_args[@]}"; do
+  case "$addon" in
+    ide)
+      [ "$MODE" != novnc ] || fail "Аддон ide несовместим с novnc. Терминал есть в рабочем столе :6080."
+      compose_args+=(-f docker-compose.sim.ide.yml) ;;
+    mcp) compose_args+=(-f docker-compose.sim.mcp.yml) ;;
+    "") ;;
+    *) fail "Неизвестный аддон '$addon'. Доступно: ide | mcp (или ide+mcp)" ;;
   esac
-}
+done
 
-compose_files() {
-  local f; f="$(files "$MODE")"
-  local a
-  for a in ${ADDON//+/ }; do
-    case "$a" in
-      ide)
-        [ "$MODE" = "novnc" ] && { echo "Аддон ide несовместим с novnc (оба меняют образ). В noVNC терминал открывается прямо в рабочем столе :6080." >&2; exit 1; }
-        f="$f -f docker-compose.sim.ide.yml" ;;
-      mcp) f="$f -f docker-compose.sim.mcp.yml" ;;
-      "" ) ;;
-      *) echo "Неизвестный аддон '$a'. Доступно: ide | mcp (или ide+mcp)" >&2; exit 1 ;;
-    esac
-  done
-  echo "$f"
-}
-
-[ -f .env ] || { echo "-> .env не найден, копирую из .env.example"; cp .env.example .env; }
+if [ ! -f .env ]; then
+  [ -f .env.example ] || fail "Нет .env.example. Восстановите файл из репозитория."
+  echo "-> .env не найден, копирую из .env.example"
+  cp .env.example .env
+fi
 
 case "$CMD" in
-  up)    docker compose $(compose_files) up -d
-         [ "$MODE" = "novnc" ] && echo "noVNC: http://localhost:6080/vnc.html"
-         case "$ADDON" in *ide*) echo "Web-IDE: http://localhost:5467  |  терминал: http://localhost:8575" ;; esac
-         case "$ADDON" in *mcp*) echo "MCP: http://localhost:8765/healthz" ;; esac ;;
-  down)  docker compose $(compose_files) down ;;
-  pull)  docker compose $(compose_files) pull ;;
-  logs)  docker compose $(compose_files) logs -f ;;
-  shell) docker exec -it sverk_sitl bash ;;
-  *) echo "Неизвестная команда '$CMD'. Доступно: up | down | pull | logs | shell" >&2; exit 1 ;;
+  up)
+    docker compose "${compose_args[@]}" up -d
+    if [ "$macos_compat" = 1 ]; then
+      docker compose "${compose_args[@]}" exec -T sitl bash /opt/sverk/sitl-compat/build.sh
+    fi
+    [ "$MODE" != novnc ] || echo "noVNC: http://localhost:6080/vnc.html"
+    case "$ADDON" in *ide*) echo "Web-IDE: http://localhost:5467  |  терминал: http://localhost:8575" ;; esac
+    case "$ADDON" in *mcp*) echo "MCP: http://localhost:8765/healthz" ;; esac ;;
+  down) docker compose "${compose_args[@]}" down ;;
+  pull) docker compose "${compose_args[@]}" pull ;;
+  logs) docker compose "${compose_args[@]}" logs -f ;;
 esac

@@ -34,7 +34,7 @@ function Files($m) {
 }
 
 function ComposeArgs {
-    $fs = Files $Mode
+    $fs = @(Files $Mode)
     foreach ($ad in ($Addon -split '[+ ]')) {
         switch ($ad) {
             "ide" {
@@ -51,6 +51,16 @@ function ComposeArgs {
     return $a
 }
 
+if ($Command -notin @("up", "down", "pull", "logs", "shell")) {
+    throw "Неизвестная команда '$Command'. Доступно: up | down | pull | logs | shell"
+}
+if ($Command -eq "shell") {
+    & docker exec -it sverk_sitl bash
+    exit $LASTEXITCODE
+}
+# Validate before copying .env or invoking Docker.
+$dockerArgs = ComposeArgs
+
 if (-not (Test-Path ".env")) {
     Write-Host "-> .env не найден, копирую из .env.example" -ForegroundColor Yellow
     Copy-Item ".env.example" ".env"
@@ -58,14 +68,15 @@ if (-not (Test-Path ".env")) {
 
 switch ($Command) {
     "up" {
-        & docker (ComposeArgs) up -d
+        & docker @dockerArgs up -d
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         if ($Mode -eq "novnc")   { Write-Host "noVNC: http://localhost:6080/vnc.html" -ForegroundColor Green }
         if ($Addon -like "*ide*") { Write-Host "Web-IDE: http://localhost:5467  |  терминал: http://localhost:8575" -ForegroundColor Green }
         if ($Addon -like "*mcp*") { Write-Host "MCP: http://localhost:8765/healthz" -ForegroundColor Green }
     }
-    "down"  { & docker (ComposeArgs) down }
-    "pull"  { & docker (ComposeArgs) pull }
-    "logs"  { & docker (ComposeArgs) logs -f }
-    "shell" { & docker exec -it sverk_sitl bash }
+    "down"  { & docker @dockerArgs down }
+    "pull"  { & docker @dockerArgs pull }
+    "logs"  { & docker @dockerArgs logs -f }
     default { throw "Неизвестная команда '$Command'. Доступно: up | down | pull | logs | shell" }
 }
+exit $LASTEXITCODE

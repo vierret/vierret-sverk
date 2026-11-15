@@ -17,3 +17,4 @@ artifacts/
 dynamic-pipeline.yml
 
 *.drawio
+/simulation/compose/.env

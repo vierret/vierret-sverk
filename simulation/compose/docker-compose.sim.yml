@@ -13,7 +13,7 @@
 #   WSLg + Intel Arc (Windows):      + docker-compose.sim.wslg.yml + .wslg.intel.yml
 #   нативный Linux X11:              + docker-compose.sim.linux-host.yml
 #
-# Полные команды и что делать внутри — в docs/PARTICIPANTS.md.
+# Полные команды и что делать внутри — в ../docs/guide.md.
 # ==============================================================
 
 services:

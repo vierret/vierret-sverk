@@ -1,0 +1,11 @@
+# Automatically included by sim.sh on Apple Silicon. No GPU passthrough.
+# Compile the library after up with:
+#   docker exec sverk_sitl bash /opt/sverk/sitl-compat/build.sh
+services:
+  sitl:
+    environment:
+      - PX4_POLL_COMPAT_LIB=/tmp/sverk-px4-poll-eintr.so
+    volumes:
+      - ../compat:/opt/sverk/sitl-compat:ro
+      # Use the fixed launch even with the existing published image/home volume.
+      - ../../main_package/launch_system/launch/full_system_sitl.launch.py:/home/sverk/sverk_ws/install/launch_system/share/launch_system/launch/full_system_sitl.launch.py:ro

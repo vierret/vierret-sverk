@@ -301,7 +301,11 @@ def _make_px4_launch(context, px4_dir):
         # retries until the server is up, so no fixed wait is strictly needed —
         # a short settle before the GUI/px4 just trims reconnect noise.
         gz_server_cmd = f'gz sim --verbose=1 -r -s --headless-rendering "{gz_world}.sdf" &'
-        gz_gui_cmd = 'gz sim -g &'
+        # Xvfb does not provide a desktop D-Bus session. Qt's accessibility
+        # bridge can block in QDBusConnection::sessionBus before mapping the
+        # main window, leaving noVNC completely black while PX4 runs normally.
+        # Give the GUI its own bus; dbus-run-session also owns its lifecycle.
+        gz_gui_cmd = 'dbus-run-session -- gz sim -g &'
         px4_cmd = (
             f'{gz_server_cmd} '
             'sleep 3 && '
@@ -337,6 +341,18 @@ def _make_px4_launch(context, px4_dir):
         additional_env['GZ_SIM_SYSTEM_PLUGIN_PATH'] = (
             f'{spray_plugin_path}:{existing_gz_plugin_path}' if existing_gz_plugin_path else spray_plugin_path
         )
+
+    # Compatibility is enabled only by the Apple Silicon Compose overlay.
+    # Keep LD_PRELOAD out of the container-wide environment and ROS nodes.
+    compat_library = os.environ.get('PX4_POLL_COMPAT_LIB', '').strip()
+    if compat_library:
+        if not os.path.isfile(compat_library):
+            raise RuntimeError(
+                'PX4 macOS compatibility library is missing. Run ./sim.sh up again '
+                'or: docker exec sverk_sitl bash /opt/sverk/sitl-compat/build.sh'
+            )
+        existing_preload = os.environ.get('LD_PRELOAD', '').strip()
+        additional_env['LD_PRELOAD'] = ' '.join(filter(None, [compat_library, existing_preload]))
 
     return [ExecuteProcess(
         cmd=['bash', '-lc', px4_cmd],
@@ -917,12 +933,11 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'use_sim_time',
-            default_value='false',
+            default_value='true',
             description='Run every ROS node on Gazebo simulation time via a /clock bridge '
-                        '(added below when true). OFF by default to preserve the verified '
-                        'wall-time wiring; enable for honest sim-time stamps across the whole '
-                        'TF/EV pipeline (fixes garbage markers_age_ms and mixed-clock TF '
-                        'timestamps). Needs a sim smoke-test after enabling.',
+                        '(added below when true). Required by the camera/ArUco/VPE pipeline: '
+                        'Gazebo image stamps use simulation time; wall time makes VPE reject '
+                        'every pose as stale and prevents GPS-to-ArUco handoff.',
         ),
 
         # Sim time: when use_sim_time:=true, apply it to EVERY node in this launch
